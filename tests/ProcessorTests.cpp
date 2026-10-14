@@ -210,6 +210,45 @@ int main()
             ed.reset();
         }
 
+        std::printf ("screen: styles, SNAP, a GIF recording without an editor\n");
+        {
+            const auto media = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("tether_media_test");
+            media.deleteRecursively();
+            setenv ("TETHER_MEDIA_DIR", media.getFullPathName().toRawUTF8(), 1);
+            p.setScreenStyle (5);
+            CHECK (p.getScreenStyle() == 5, "style stored");
+            p.setScreenStyle (99);
+            CHECK (p.getScreenStyle() == 5, "style clamped: %d", p.getScreenStyle());
+            norns.cmd ("PAINT\t0\t15");
+            p.startRecording();
+            CHECK (p.isRecording(), "recording");
+            r.run (300);
+            norns.cmd ("PAINT\t1\t8");
+            r.run (300);
+            norns.cmd ("PAINT\t2\t4");
+            r.run (300);
+            const auto png = p.snapshot();
+            CHECK (png.existsAsFile(), "snapshot written");
+            if (auto im = juce::ImageFileFormat::loadFrom (png); im.isValid())
+            {
+                CHECK (im.getWidth() == 512 && im.getHeight() == 256, "snapshot size %dx%d", im.getWidth(), im.getHeight());
+                CHECK (im.getPixelAt (5, 5) == juce::Colours::black, "paper: level 15 is black");
+                CHECK (im.getPixelAt (5, 200) == juce::Colours::white, "paper: level 0 is white");
+            }
+            else CHECK (false, "snapshot reads back");
+            const auto gifFile = p.stopRecording();
+            CHECK (! p.isRecording(), "stopped");
+            CHECK (r.until ([&] { return ! p.encoding(); }, 5000), "encoded");
+            CHECK (gifFile.existsAsFile() && gifFile == p.lastRecording(), "gif written: %s", gifFile.getFullPathName().toRawUTF8());
+            juce::MemoryBlock mb2;
+            gifFile.loadFileAsData (mb2);
+            CHECK (mb2.getSize() > 100 && std::memcmp (mb2.getData(), "GIF89a", 6) == 0, "gif header");
+            // the stream stops again with no editor and no recording (the mod is told fps 0)
+            CHECK (gifFile.getFileName().startsWith ("tether_mlr_"), "named after the script: %s", gifFile.getFileName().toRawUTF8());
+            std::printf ("  gif: %s (%d bytes)\n", gifFile.getFullPathName().toRawUTF8(), (int) mb2.getSize());
+            p.setScreenStyle (0);
+        }
+
         std::printf ("LINK off: the link goes quiet\n");
         {
             auto* lk = p.apvts.getParameter (ids::link);

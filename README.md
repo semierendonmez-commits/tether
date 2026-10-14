@@ -72,6 +72,9 @@ görünür; orada K3 hepsini düşürür (eklentiler bir saniye içinde yeniden 
 | **E1–E3** | yukarı / aşağı sürükle ya da tekerlek; shift ile ince |
 | **klavye** | panele bir kez tıkla: **1 2 3** tuşlar, **Q/A W/S E/D** enkoderler (shift: tek adım) |
 | **parlama** | norns'taki gerçek tuş ve enkoder hareketleri panelde yanar, başlık plazması tepki verir |
+| **SCREEN** | ekranın renkleri (temadan bağımsız, oturumla kaydedilir): `INK` temanın mürekkebi · `THERMAL` temanın renk rampası, sönük seviyeler soğuk, parlak seviyeler sıcak · `DUOTONE` temanın iki rengi · `SPECTRUM` her seviyeye bir renk · `OLED` norns'taki gibi gri · `PAPER` beyaz üstüne siyah |
+| **REC** | ekranı GIF olarak kaydeder (yeniden tıkla: durur, en çok 10 dakika). Düğmede geçen süre, ekranın üstünde kırmızı nokta. Editör kapalıyken de sürer. Dosya `~/Music/TETHER/tether_<script>_<tarih>.gif`, 512 × 256, seçili SCREEN renkleriyle. Düğmeyi dışarı sürükle: son kayıt DAW'a / Finder'a düşer |
+| **SNAP** | ekranın o anki hali, PNG, aynı klasöre; sürükleyip bırakılabilir |
 
 Bağlantı yokken ekran durumu söyler: `LOOKING UP`, `NOT FOUND` (ad çözülmedi), `WAITING`,
 `NO REPLY` (cevap yok: mod açık mı?), `LOST` (sessizleşti; ağ değiştiyse adı yeniden çözer).
@@ -145,6 +148,8 @@ ve PSET değişimini kaydeder.
 - **Ses taşımaz.** norns'un sesini DAW'a almak için ses arayüzü üzerinden kaydet.
 - **Ağ gecikmesi**: Wi-Fi'de genelde 2–20 ms, oynaktır. Otomasyon ve sahne için yeterli, örnek-doğruluğu
   yok; sıkı ritmik tetik için norns'un MIDI'ı ya da Link daha iyidir.
+- **Hız** internete değil yerel ağa bağlı (norns ile bilgisayar arası). Wi-Fi'de gecikme oynaktır; kablo
+  (Ethernet) ve norns'ta Wi-Fi güç tasarrufunu kapatmak en büyük farkı yapar.
 - **Ekran aynası** 30 fps'te en çok ~240 KB/s (yalnız değişen bantlar gider, genelde çok daha az);
   editör kapanınca durur.
 - Slot değerleri en çok ~120 Hz, değişim eşiği 0.0001.

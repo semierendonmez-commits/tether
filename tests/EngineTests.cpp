@@ -3,6 +3,8 @@
 // lua5.4); this test carries its messages over real UDP on 127.0.0.1, so both sides of the
 // protocol are the shipping code.
 #include "NornsSim.h"
+#include "engine/Gif.h"
+#include <random>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -65,6 +67,96 @@ static void codec()
     out.clear();
     osc::decode (bb.data(), bb.size(), out);
     CHECK (out.size() == 1 && out[0].s (0).size() == 3 && out[0].s (0)[2] == 2, "blob");
+}
+
+
+// ---- the GIF writer: decode it back (a plain LZW reader, independent of the writer) ----------------
+static bool readGif (const std::vector<uint8_t>& b, int& w, int& h, std::vector<std::vector<uint8_t>>& frames, std::vector<int>& delays)
+{
+    if (b.size() < 13 || std::memcmp (b.data(), "GIF89a", 6) != 0) return false;
+    w = b[6] | (b[7] << 8); h = b[8] | (b[9] << 8);
+    size_t p = 13 + (size_t) 3 * (size_t) (2 << (b[10] & 7));
+    int delay = 0;
+    while (p < b.size())
+    {
+        const uint8_t tag = b[p++];
+        if (tag == 0x3B) return true;
+        if (tag == 0x21)
+        {
+            const uint8_t label = b[p++];
+            if (label == 0xF9) delay = b[p + 2] | (b[p + 3] << 8);
+            while (p < b.size() && b[p] != 0) p += (size_t) b[p] + 1;
+            ++p;
+            continue;
+        }
+        if (tag != 0x2C) return false;
+        p += 9;
+        const int minBits = b[p++];
+        std::vector<uint8_t> data;
+        while (b[p] != 0) { data.insert (data.end(), b.begin() + (long) p + 1, b.begin() + (long) p + 1 + b[p]); p += (size_t) b[p] + 1; }
+        ++p;
+        const int clear = 1 << minBits, eoi = clear + 1;
+        std::vector<std::vector<uint8_t>> dict;
+        auto reset = [&] { dict.clear(); for (int i = 0; i < clear + 2; ++i) dict.push_back ({ (uint8_t) i }); };
+        reset();
+        int bits = minBits + 1, prev = -1;
+        size_t bitPos = 0;
+        std::vector<uint8_t> out;
+        for (;;)
+        {
+            if ((bitPos + (size_t) bits + 7) / 8 > data.size()) return false;
+            int code = 0;
+            for (int k = 0; k < bits; ++k, ++bitPos) code |= ((data[bitPos / 8] >> (bitPos % 8)) & 1) << k;
+            if (code == clear) { reset(); bits = minBits + 1; prev = -1; continue; }
+            if (code == eoi) break;
+            std::vector<uint8_t> entry;
+            if (code < (int) dict.size()) entry = dict[(size_t) code];
+            else if (code == (int) dict.size() && prev >= 0) { entry = dict[(size_t) prev]; entry.push_back (dict[(size_t) prev][0]); }
+            else return false;
+            out.insert (out.end(), entry.begin(), entry.end());
+            if (prev >= 0 && dict.size() < 4096) { auto e = dict[(size_t) prev]; e.push_back (entry[0]); dict.push_back (e); }
+            if ((int) dict.size() == (1 << bits) && bits < 12) ++bits;
+            prev = code;
+        }
+        frames.push_back (out);
+        delays.push_back (delay);
+    }
+    return false;
+}
+
+static void gifWriter()
+{
+    std::array<gif::Rgb, 16> pal;
+    for (int k = 0; k < 16; ++k) pal[(size_t) k] = { (uint8_t) (k * 17), (uint8_t) (255 - k * 17), (uint8_t) (k * 5) };
+    // three norns frames: flat, a gradient, noise (noise fills the LZW table: clear codes)
+    std::vector<std::vector<uint8_t>> src (3, std::vector<uint8_t> (128 * 64, 0));
+    for (int i = 0; i < 128 * 64; ++i) src[1][(size_t) i] = (uint8_t) ((i % 128) / 8);
+    std::mt19937 rng (7);
+    for (auto& v : src[2]) v = (uint8_t) (rng() & 15);
+    gif::Writer w (512, 256, pal);
+    std::vector<uint8_t> scaled;
+    const int delays[3] = { 3, 4, 250 };
+    for (int f = 0; f < 3; ++f) { gif::scaleFrame (src[(size_t) f].data(), 4, scaled); w.frame (scaled.data(), delays[f]); }
+    const auto bytes = w.finish();
+    int gw = 0, gh = 0;
+    std::vector<std::vector<uint8_t>> frames;
+    std::vector<int> d;
+    CHECK (readGif (bytes, gw, gh, frames, d), "gif decodes");
+    CHECK (gw == 512 && gh == 256 && frames.size() == 3, "gif %dx%d %zu frames", gw, gh, frames.size());
+    bool same = frames.size() == 3;
+    for (int f = 0; f < 3 && same; ++f)
+    {
+        gif::scaleFrame (src[(size_t) f].data(), 4, scaled);
+        same = frames[(size_t) f] == scaled && d[(size_t) f] == delays[f];
+    }
+    CHECK (same, "gif frames and delays round-trip");
+    const char* out = std::getenv ("TETHER_GIF_OUT");     // for an outside check (PIL)
+    if (out != nullptr)
+    {
+        w.save (out);
+        gif::scaleFrame (src[2].data(), 4, scaled);
+        if (FILE* f = std::fopen ((std::string (out) + ".raw").c_str(), "wb")) { std::fwrite (scaled.data(), 1, scaled.size(), f); std::fclose (f); }
+    }
 }
 
 struct Rig
@@ -305,6 +397,7 @@ static void threaded()
 int main()
 {
     codec();
+    gifWriter();
     const std::string lua = findLua();
     if (lua.empty()) std::printf ("(no lua: end-to-end test skipped)\n");
     else endToEnd (lua);

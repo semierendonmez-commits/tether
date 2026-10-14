@@ -10,6 +10,7 @@
 #include "FamilyManifest.h"
 #include "Params.h"
 #include "engine/NornsLink.h"
+#include <memory>
 
 class TetherProcessor : public juce::AudioProcessor, private juce::Timer
 {
@@ -63,6 +64,22 @@ public:
     void editorOpened();
     void editorClosed();
 
+    // ---- the screen: colour style, snapshot, recording (message thread) -------------------------------
+    int getScreenStyle() const;
+    void setScreenStyle (int);
+    int getThemeIndex() const { return (int) apvts.state.getProperty ("theme", 0); }
+    juce::File mediaFolder() const;                       // ~/Music/TETHER
+    juce::File snapshot();                                // a PNG of the last frame (x4); {} if no frame yet
+    void startRecording();
+    juce::File stopRecording();                           // the GIF it is writing (ready when ! encoding())
+    bool isRecording() const noexcept { return recording; }
+    bool encoding() const;
+    double recordingSeconds() const;
+    juce::File lastRecording() const { return lastRec; }
+    std::function<void (const juce::String&)> onMediaMessage;   // "saved ...", for the editor's hint line
+    static constexpr double kMaxRecordSeconds = 600.0;
+    static constexpr int kGifScale = 4;
+
     // ---- live state for the editor ------------------------------------------------------------------
     struct Live
     {
@@ -90,6 +107,21 @@ private:
 
     // message thread
     int editors = 0;
+    void updateScreenFps();
+    juce::String mediaName (const juce::String& ext) const;
+
+    // recording (message thread): distinct frames, each with the time it appeared
+    struct EncodeJob;
+    bool recording = false;
+    double recStart = 0.0;
+    uint32_t recSerial = 0;
+    std::vector<uint8_t> recFrames;                       // 8192 bytes a frame
+    std::vector<double> recTimes;
+    std::array<uint8_t, tether::kScreenW * tether::kScreenH> lastFrame {};
+    uint32_t lastFrameSerial = 0;
+    bool haveFrame = false;
+    std::shared_ptr<EncodeJob> job;
+    juce::File lastRec;
     int psetLoaded = 0;
     uint32_t listSeen = 0;
     std::string scriptSeen;

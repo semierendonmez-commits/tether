@@ -163,6 +163,46 @@ NornsPanel::NornsPanel (Skin& s, TetherProcessor& p) : skin (s), proc (p)
         addAndMakeVisible (*key[i]);
     }
     img = juce::Image (juce::Image::RGB, tether::kScreenW * 4, tether::kScreenH * 4, true);
+
+    for (auto* b : { &styleBtn, &recBtn, &snapBtn }) addAndMakeVisible (b);
+    styleBtn.text = "SCREEN";
+    styleBtn.setTooltip ("SCREEN: how the norns screen is coloured here, in snapshots and in recordings.");
+    styleBtn.onClick = [this] { styleMenu(); };
+    recBtn.text = "REC";
+    recBtn.setTooltip ("REC: record the norns screen to a GIF in ~/Music/TETHER (click again to stop). Drag this button out to drop the last recording somewhere.");
+    recBtn.onClick = [this]
+    {
+        if (proc.isRecording()) proc.stopRecording(); else proc.startRecording();
+        recBtn.repaint();
+    };
+    recBtn.onDragOut = [this]
+    {
+        const auto f = proc.lastRecording();
+        if (f.existsAsFile() && ! proc.encoding()) juce::DragAndDropContainer::performExternalDragDropOfFiles ({ f.getFullPathName() }, false, this);
+    };
+    snapBtn.text = "SNAP";
+    snapBtn.setTooltip ("SNAP: save the screen as it is now, a PNG in ~/Music/TETHER (drag this button out to drop the last one).");
+    snapBtn.onClick = [this] { lastSnap = proc.snapshot(); };
+    snapBtn.onDragOut = [this]
+    {
+        if (lastSnap.existsAsFile()) juce::DragAndDropContainer::performExternalDragDropOfFiles ({ lastSnap.getFullPathName() }, false, this);
+    };
+}
+
+void NornsPanel::styleMenu()
+{
+    juce::PopupMenu m;
+    m.addSectionHeader ("SCREEN COLOURS");
+    const int cur = proc.getScreenStyle();
+    for (int i = 0; i < kNumScreenStyles; ++i)
+        m.addItem (i + 1, juce::String (screenStyleName (i)) + "   " + screenStyleHint (i), true, i == cur);
+    juce::Component::SafePointer<NornsPanel> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&styleBtn), [safe] (int r)
+    {
+        if (safe == nullptr || r <= 0) return;
+        safe->proc.setScreenStyle (r - 1);
+        safe->lastStyle = -1;
+    });
 }
 
 NornsPanel::~NornsPanel()
@@ -186,34 +226,50 @@ void NornsPanel::resized()
     enc[1]->setBounds (enc[2]->getX() - encS - 16, y, encS, encS + 12);
     key[1]->setBounds (enc[1]->getX() - 118, y + 12, keyS, keyS + 12);
     key[2]->setBounds (key[1]->getRight() + 8, y + 12, keyS, keyS + 12);
+
+    // between E1 and K2: the screen's own buttons
+    const int gx = enc[0]->getRight() + 8, gw = key[1]->getX() - gx - 8;
+    styleBtn.setBounds (gx, y + 8, gw, 28);
+    recBtn.setBounds (gx, y + 42, gw / 2 - 2, 28);
+    snapBtn.setBounds (gx + gw / 2 + 2, y + 42, gw - gw / 2 - 2, 28);
 }
 
 void NornsPanel::rebuildImage()
 {
-    const auto& t = skin.t();
-    juce::Colour lv[16];
-    for (int k = 0; k < 16; ++k)
-    {
-        const float f = (float) k / 15.0f;
-        lv[k] = t.screen.interpolatedWith (t.ink, std::pow (f, 0.85f));
-    }
-    const auto gap = t.screen.interpolatedWith (t.ink, 0.03f);
+    pal = screenPalette (skin.t(), proc.getScreenStyle());
+    juce::Colour edge[16];
+    for (int k = 0; k < 16; ++k) edge[k] = k == 0 ? pal.grid : pal.level[k].interpolatedWith (pal.bg, 0.45f);
     juce::Image::BitmapData bd (img, juce::Image::BitmapData::writeOnly);
     for (int y = 0; y < tether::kScreenH; ++y)
         for (int x = 0; x < tether::kScreenW; ++x)
         {
-            const auto c = lv[pix[(size_t) (y * tether::kScreenW + x)] & 15];
-            const auto edge = c.interpolatedWith (t.screen, 0.55f);
+            const int lv = pix[(size_t) (y * tether::kScreenW + x)] & 15;
+            const auto c = pal.level[lv], e = edge[lv];
             for (int dy = 0; dy < 4; ++dy)
                 for (int dx = 0; dx < 4; ++dx)
-                    bd.setPixelColour (x * 4 + dx, y * 4 + dy, (dx == 3 || dy == 3) ? (c == lv[0] ? gap : edge) : c);
+                    bd.setPixelColour (x * 4 + dx, y * 4 + dy, (dx == 3 || dy == 3) ? e : c);
         }
 }
 
 void NornsPanel::pump (float dt)
 {
     if (proc.norns.readScreen (pix.data(), serial)) { ++frames; rebuildImage(); repaint (screenRect.expanded (4)); }
-    if (skin.index != lastTheme) { lastTheme = skin.index; rebuildImage(); repaint(); }
+    if (skin.index != lastTheme || proc.getScreenStyle() != lastStyle)
+    {
+        lastTheme = skin.index;
+        lastStyle = proc.getScreenStyle();
+        rebuildImage();
+        styleBtn.text = screenStyleName (lastStyle);
+        styleBtn.repaint();
+        repaint();
+    }
+
+    // REC: the elapsed time on the button while it runs, a blinking dot over the screen
+    const bool rec = proc.isRecording();
+    const juce::String rt = rec ? juce::String ((int) proc.recordingSeconds() / 60) + ":" + juce::String ((int) proc.recordingSeconds() % 60).paddedLeft ('0', 2)
+                                : juce::String (proc.encoding() ? "SAVING" : "REC");
+    if (rt != recBtn.text) { recBtn.text = rt; recBtn.repaint(); }
+    if (rec) { blink += dt; repaint (screenRect.getRight() - 70, screenRect.getY() - 14, 76, 14); }
 
     for (int i = 0; i < 6; ++i)
     {
@@ -252,6 +308,8 @@ void NornsPanel::paint (juce::Graphics& g)
     }
 
     draw::screenWell (g, screenRect, t);
+    g.setColour (pal.bg);
+    g.fillRect (screenRect);
     const bool live = frames > 0 && proc.norns.status() == tether::Status::Connected;
     if (frames > 0)
     {
@@ -274,14 +332,25 @@ void NornsPanel::paint (juce::Graphics& g)
             case tether::Status::Lost:      b = "the norns went quiet"; break;
             case tether::Status::Connected: b = "waiting for the first frame"; break;
         }
-        g.setColour (t.ink);
+        g.setColour (pal.text);
         g.setFont (screenFont (34.0f));
         g.drawText (a, screenRect.withTrimmedBottom (40), juce::Justification::centred);
-        g.setColour (t.ink.withAlpha (0.7f));
+        g.setColour (pal.text.withAlpha (0.7f));
         g.setFont (screenFont (19.0f));
         g.drawText (b, screenRect.withTrimmedTop (70).reduced (12, 0), juce::Justification::centred);
     }
-    draw::scanlines (g, screenRect, t, 0.10f);
+    draw::scanlines (g, screenRect, t, pal.bg.getPerceivedBrightness() > 0.5f ? 0.04f : 0.10f);
+
+    if (proc.isRecording())
+    {
+        auto r = juce::Rectangle<int> (screenRect.getRight() - 64, screenRect.getY() - 13, 64, 12);
+        const bool on = std::fmod (blink, 1.0f) < 0.6f;
+        g.setColour (juce::Colour (0xffe8302a).withAlpha (on ? 1.0f : 0.25f));
+        g.fillEllipse (r.removeFromLeft (12).reduced (2).toFloat());
+        g.setColour (t.text);
+        g.setFont (labelFont (8.0f));
+        g.drawText ("RECORDING", r.withTrimmedLeft (3), juce::Justification::centredLeft);
+    }
 
     if (hasKeyboardFocus (true))
     {

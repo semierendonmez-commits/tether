@@ -109,6 +109,20 @@ int main (int argc, char** argv)
         save (*ed, out.getChildFile ("theme_" + juce::String (i).paddedLeft ('0', 2) + "_" + juce::String (ui::theme (i).name).replaceCharacters (" '", "__") + ".png"));
     }
     ed->setTheme (0);
+    for (int st = 0; st < 6; ++st)
+    {
+        proc.setScreenStyle (st);
+        run (2);
+        save (ed->panel(), out.getChildFile ("screen_" + juce::String (st) + ".png"));
+    }
+    proc.setScreenStyle (5);
+    for (int th : { 0, 4 }) { ed->setTheme (th); run (2); save (*ed, out.getChildFile ("paper_theme_" + juce::String (th) + ".png")); }
+    proc.setScreenStyle (1);
+    ed->setTheme (0);
+    proc.startRecording();
+    run (10);
+    save (*ed, out.getChildFile ("recording.png"));
+    proc.stopRecording();
     ed.reset();
     norns.stop();
     return 0;

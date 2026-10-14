@@ -1,5 +1,8 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "engine/Gif.h"
+#include "ui/ScreenStyle.h"
+#include <thread>
 
 using namespace tether;
 
@@ -145,6 +148,29 @@ void TetherProcessor::timerCallback()
 {
     norns.setEnabled (linkRaw->load() > 0.5f);
 
+    // the latest frame, for snapshots and the recording
+    if (norns.readScreen (lastFrame.data(), lastFrameSerial))
+    {
+        haveFrame = true;
+        if (recording)
+        {
+            const size_t n = recFrames.size();
+            const size_t fb = (size_t) kScreenW * kScreenH;
+            if (n < fb || std::memcmp (recFrames.data() + n - fb, lastFrame.data(), fb) != 0)
+            {
+                recFrames.insert (recFrames.end(), lastFrame.begin(), lastFrame.end());
+                recTimes.push_back (juce::Time::getMillisecondCounterHiRes() * 0.001);
+            }
+        }
+    }
+    if (recording && recordingSeconds() >= kMaxRecordSeconds) stopRecording();
+    if (job != nullptr && ! encoding())
+    {
+        if (onMediaMessage) onMediaMessage (lastRec.existsAsFile() ? "recording saved: " + lastRec.getFullPathName()
+                                                                   : juce::String ("the recording could not be written"));
+        job.reset();
+    }
+
     // PSET: a new number loads that preset on norns (SETBOOK recalls it with a scene)
     const int ps = juce::roundToInt (psetRaw->load());
     if (ps != psetLoaded)
@@ -247,13 +273,138 @@ void TetherProcessor::updateTrackProperties (const TrackProperties& p)
 void TetherProcessor::editorOpened()
 {
     ++editors;
-    norns.setScreenFps (30);
+    updateScreenFps();
 }
 
 void TetherProcessor::editorClosed()
 {
     editors = juce::jmax (0, editors - 1);
-    if (editors == 0) norns.setScreenFps (0);
+    updateScreenFps();
+}
+
+// the screen streams while an editor is open or a recording runs
+void TetherProcessor::updateScreenFps() { norns.setScreenFps (editors > 0 || recording ? 30 : 0); }
+
+//==============================================================================
+int TetherProcessor::getScreenStyle() const
+{
+    return juce::jlimit (0, ui::kNumScreenStyles - 1, (int) apvts.state.getProperty ("screenStyle", (int) ui::StyleInk));
+}
+
+void TetherProcessor::setScreenStyle (int s)
+{
+    apvts.state.setProperty ("screenStyle", juce::jlimit (0, ui::kNumScreenStyles - 1, s), nullptr);
+}
+
+juce::File TetherProcessor::mediaFolder() const
+{
+    if (const char* d = std::getenv ("TETHER_MEDIA_DIR")) return juce::File (juce::String::fromUTF8 (d));   // tests
+    return juce::File::getSpecialLocation (juce::File::userMusicDirectory).getChildFile ("TETHER");
+}
+
+juce::String TetherProcessor::mediaName (const juce::String& ext) const
+{
+    auto script = juce::String (norns.snapshot (false).script).retainCharacters ("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-");
+    if (script.isEmpty()) script = "norns";
+    const auto name = "tether_" + script + "_" + juce::Time::getCurrentTime().formatted ("%Y-%m-%d_%H-%M-%S");
+    mediaFolder().createDirectory();
+    return mediaFolder().getNonexistentChildFile (name, ext, false).getFullPathName();
+}
+
+juce::File TetherProcessor::snapshot()
+{
+    if (! haveFrame) return {};
+    const auto pal = ui::screenPalette (ui::theme (getThemeIndex()), getScreenStyle());
+    juce::Image im (juce::Image::RGB, kScreenW * kGifScale, kScreenH * kGifScale, false);
+    {
+        juce::Image::BitmapData bd (im, juce::Image::BitmapData::writeOnly);
+        for (int y = 0; y < im.getHeight(); ++y)
+            for (int x = 0; x < im.getWidth(); ++x)
+                bd.setPixelColour (x, y, pal.level[lastFrame[(size_t) ((y / kGifScale) * kScreenW + x / kGifScale)] & 15]);
+    }
+    const juce::File f (mediaName (".png"));
+    f.deleteFile();
+    bool ok = false;
+    if (auto os = f.createOutputStream()) ok = juce::PNGImageFormat().writeImageToStream (im, *os);
+    if (onMediaMessage) onMediaMessage (ok ? "snapshot saved: " + f.getFullPathName() : juce::String ("the snapshot could not be written"));
+    return ok ? f : juce::File();
+}
+
+struct TetherProcessor::EncodeJob
+{
+    std::atomic<bool> done { false };
+};
+
+bool TetherProcessor::encoding() const { return job != nullptr && ! job->done.load(); }
+
+double TetherProcessor::recordingSeconds() const
+{
+    return recording ? juce::Time::getMillisecondCounterHiRes() * 0.001 - recStart : 0.0;
+}
+
+void TetherProcessor::startRecording()
+{
+    if (recording || encoding()) return;
+    recFrames.clear();
+    recTimes.clear();
+    recStart = juce::Time::getMillisecondCounterHiRes() * 0.001;
+    recording = true;
+    if (haveFrame)                                        // start from what is on screen now
+    {
+        recFrames.insert (recFrames.end(), lastFrame.begin(), lastFrame.end());
+        recTimes.push_back (recStart);
+    }
+    updateScreenFps();
+    if (onMediaMessage) onMediaMessage ("recording the norns screen (GIF, up to 10 minutes)");
+}
+
+juce::File TetherProcessor::stopRecording()
+{
+    if (! recording) return {};
+    recording = false;
+    updateScreenFps();
+    const double end = juce::Time::getMillisecondCounterHiRes() * 0.001;
+    if (recTimes.empty())
+    {
+        if (onMediaMessage) onMediaMessage ("nothing recorded: no frame came from norns");
+        return {};
+    }
+
+    // the palette and the delays now; the encoding on its own thread
+    const auto pal = ui::screenPalette (ui::theme (getThemeIndex()), getScreenStyle());
+    std::array<tether::gif::Rgb, 16> rgb;
+    for (int k = 0; k < 16; ++k) rgb[(size_t) k] = { pal.level[k].getRed(), pal.level[k].getGreen(), pal.level[k].getBlue() };
+    std::vector<int> delays;
+    double shown = 0.0;                                   // centiseconds written so far, so rounding never drifts
+    for (size_t i = 0; i < recTimes.size(); ++i)
+    {
+        const double until = (i + 1 < recTimes.size() ? recTimes[i + 1] : end) - recTimes[0];
+        const int d = juce::jmax (2, (int) std::lround (until * 100.0 - shown));
+        delays.push_back (d);
+        shown += d;
+    }
+
+    const juce::File f (mediaName (".gif"));
+    lastRec = f;
+    auto j = std::make_shared<EncodeJob>();
+    job = j;
+    std::thread ([j, frames = std::move (recFrames), delays, rgb, path = f.getFullPathName().toStdString()]
+    {
+        tether::gif::Writer w (kScreenW * kGifScale, kScreenH * kGifScale, rgb);
+        std::vector<uint8_t> scaled;
+        const size_t fb = (size_t) kScreenW * kScreenH;
+        for (size_t i = 0; i < delays.size(); ++i)
+        {
+            tether::gif::scaleFrame (frames.data() + i * fb, kGifScale, scaled);
+            w.frame (scaled.data(), delays[i]);
+        }
+        w.save (path);
+        j->done.store (true);
+    }).detach();
+    recFrames = {};
+    recTimes.clear();
+    if (onMediaMessage) onMediaMessage ("writing " + f.getFileName() + " ...");
+    return f;
 }
 
 //==============================================================================

@@ -234,6 +234,8 @@ TetherEditor::TetherEditor (TetherProcessor& p) : AudioProcessorEditor (p), proc
     themeBtn.text = "THEME";
     themeBtn.onClick = [this] { themeMenu(); };
 
+    proc.onMediaMessage = [this] (const juce::String& m) { hint (m); };
+
     setSize (kW, kH);
     proc.editorOpened();
     startTimerHz (30);
@@ -242,6 +244,7 @@ TetherEditor::TetherEditor (TetherProcessor& p) : AudioProcessorEditor (p), proc
 TetherEditor::~TetherEditor()
 {
     stopTimer();
+    proc.onMediaMessage = nullptr;
     proc.editorClosed();
     setLookAndFeel (nullptr);
 }
