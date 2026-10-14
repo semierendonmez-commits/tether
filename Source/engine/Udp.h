@@ -140,7 +140,9 @@ public:
         hints.ai_socktype = SOCK_DGRAM;
         addrinfo* res = nullptr;
         if (getaddrinfo (host.c_str(), nullptr, &hints, &res) != 0 || res == nullptr) return out;
-        out.sa.sin_addr = ((sockaddr_in*) res->ai_addr)->sin_addr;
+        sockaddr_in found {};
+        std::memcpy (&found, res->ai_addr, sizeof (found));
+        out.sa.sin_addr = found.sin_addr;
         freeaddrinfo (res);
         out.valid = true;
         return out;

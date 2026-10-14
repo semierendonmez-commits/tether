@@ -33,16 +33,19 @@ public:
     bool hasLocks() const override { return false; }
 
     class SlotCell;
+    class Tabs;
+    void setLinkPage (int);
 
 private:
     void timerCallback() override { pump (1.0f / 30.0f); }
     void themeMenu();
     void paintLink (juce::Graphics&, juce::Rectangle<int>);
+    void paintAudio (juce::Graphics&);
 
     TetherProcessor& proc;
     ui::Skin skin;
     ui::Look look { skin };
-    ui::Header header { skin, "TETHER", "NORNS  //  SCREEN, KEYS, ENCODERS AND PARAMETERS FROM THE DAW" };
+    ui::Header header { skin, TetherProcessor::isFx ? "TETHER FX" : "TETHER", "NORNS  //  SCREEN, KEYS, ENCODERS, PARAMETERS AND AUDIO FROM THE DAW" };
     ui::NornsPanel nornsPanel { skin, proc };
     ui::ParamList paramList { skin, proc };
     std::vector<std::unique_ptr<SlotCell>> cells;
@@ -52,6 +55,13 @@ private:
     std::unique_ptr<ui::Toggle> linkT;
     std::unique_ptr<ui::MenuCell> syncCell;
     std::unique_ptr<ui::NumberBox> psetBox;
+    // the LINK window's AUDIO page
+    std::unique_ptr<Tabs> tabs;
+    int linkPage = 0;
+    std::unique_ptr<ui::Toggle> fromT, toT, thruT;
+    std::unique_ptr<ui::NumberBox> bufferBox, fromGainBox, toGainBox;
+    std::unique_ptr<ui::MenuCell> bitsCell;
+    juce::Rectangle<int> audioArea;
 
     juce::Rectangle<int> nornsWin, paramsWin, slotsWin, linkWin, hintArea, infoArea;
     juce::String hintText;

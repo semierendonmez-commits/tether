@@ -4,6 +4,8 @@
 // protocol are the shipping code.
 #include "NornsSim.h"
 #include "engine/Gif.h"
+#include "engine/AudioWire.h"
+#include <map>
 #include <random>
 #include <cstdio>
 #include <cstdlib>
@@ -157,6 +159,54 @@ static void gifWriter()
         gif::scaleFrame (src[2].data(), 4, scaled);
         if (FILE* f = std::fopen ((std::string (out) + ".raw").c_str(), "wb")) { std::fwrite (scaled.data(), 1, scaled.size(), f); std::fclose (f); }
     }
+}
+
+// ---- the audio wire: jitter, reordering, loss and clock drift, simulated in virtual time ---------------
+// norns' clock 150 ppm fast at 48 kHz, 128-frame packets with 2-32 ms of jitter (often out of order),
+// a 44.1 kHz host pulling 256 frames, 40 ms buffer; from 120 s on, 1 % loss and 60 ms spikes.
+static void audioWire()
+{
+    using namespace tether::audio;
+    std::printf ("audio wire (simulated 3 minutes)\n");
+
+  Sender snd; Receiver rcv;
+  const double srcNom=48000, srcTrue=48000*(1+150e-6), dst=44100; const int per=128, blk=256; const double target=40;
+  std::mt19937 rng(1); std::uniform_real_distribution<double> U(0,1);
+  std::multimap<double,std::vector<uint8_t>> net; double tSend=0,tPull=0; double ph=0;
+  std::vector<float> L(blk),R(blk); float* out[2]={L.data(),R.data()};
+  std::vector<float> outAll;
+  uint8_t pkt[8192];
+  float inL[per],inR[per]; const float* in[2]={inL,inR};
+  uint32_t urAt30=0;
+  for(double t=0;t<180;){
+    double next=std::min(tSend,tPull);
+    t=next;
+    if(tSend<=tPull){
+      for(int i=0;i<per;++i){ inL[i]=0.5f*std::sin(ph); inR[i]=-inL[i]; ph+=2*M_PI*1000/srcNom; }
+      snd.push(in,2,per,srcNom);
+      size_t n=snd.pop(per,S24,pkt);
+      bool drop = t>120 && U(rng)<0.01;
+      double delay = 0.002 + 0.015*U(rng)*U(rng) + (U(rng)<0.002?(t>120?0.06:0.015):0);
+      if(!drop) net.emplace(t+delay,std::vector<uint8_t>(pkt,pkt+n));
+      tSend+=per/srcTrue;
+    } else {
+      while(!net.empty() && net.begin()->first<=t){ Header h; auto&v=net.begin()->second; if(parseHeader(v.data(),v.size(),h)) rcv.push(h,v.data()+kHeader); net.erase(net.begin()); }
+      rcv.pull(out,2,blk,dst,target);
+      if(t>20 && t<120) outAll.insert(outAll.end(),L.begin(),L.end());
+      if(t>=30 && urAt30==0) urAt30=rcv.underruns.load()+1;
+      tPull+=blk/dst;
+    }
+  }
+  // frequency by zero crossings, max step
+  int zc=0; float maxd=0; for(size_t i=1;i<outAll.size();++i){ if(outAll[i-1]<0&&outAll[i]>=0)++zc; maxd=std::max(maxd,std::abs(outAll[i]-outAll[i-1])); }
+  double f=zc/(outAll.size()/dst);
+  std::printf ("  freq %.3f maxstep %.4f fill %.1fms drift %.1fppm underruns %u (at30 %u) lost %u missing %u late %u resync %u\n",f,maxd,rcv.fillMs(),rcv.driftPpm(),rcv.underruns.load(),urAt30-1,rcv.lost.load(),rcv.missing(),rcv.late.load(),rcv.resyncs.load());
+  CHECK(std::abs(f-1000.15)<0.5,"freq %f",f);
+  CHECK(maxd<0.08f,"smooth %f",maxd);
+  CHECK(rcv.underruns.load()==urAt30-1,"no underruns after warmup");
+  CHECK(std::abs(rcv.fillMs()-target)<15,"fill %f",rcv.fillMs());
+  CHECK(std::abs(rcv.driftPpm()-150)<120,"drift %f",rcv.driftPpm());
+  CHECK(rcv.missing() < 400 && rcv.underruns.load()==0,"losses bounded %u",rcv.missing());
 }
 
 struct Rig
@@ -398,6 +448,7 @@ int main()
 {
     codec();
     gifWriter();
+    audioWire();
     const std::string lua = findLua();
     if (lua.empty()) std::printf ("(no lua: end-to-end test skipped)\n");
     else endToEnd (lua);

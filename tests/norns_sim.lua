@@ -47,6 +47,8 @@ _norns = {
   enc = function(n, d) emit("LOG", "enc", n, d) end,
 }
 norns = { state = { name = "awake" } }
+_path = { code = "/home/we/dust/code/" }
+os.execute = function() emit("LOG", "audio_start"); return true end
 
 local function make_params()
   local function P(t, f) f.t = t; return f end

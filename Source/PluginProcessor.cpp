@@ -15,26 +15,26 @@ public:
         : juce::AudioParameterFloat (juce::ParameterID { ids::slot (s), 1 }, "Slot " + juce::String (s + 1),
                                      juce::NormalisableRange<float> (0.0f, 1.0f), 0.0f,
                                      juce::AudioParameterFloatAttributes().withStringFromValueFunction (
-                                         [] (float v, int) { return juce::String (juce::roundToInt (v * 1000.0f) / 10.0f, 1) + "%"; })),
+                                         [] (float v, int) { return juce::String ((float) juce::roundToInt (v * 1000.0f) / 10.0f, 1) + "%"; })),
           index (s)
     {}
 
     juce::String getName (int maximumLength) const override
     {
         const juce::SpinLock::ScopedLockType l (lock);
-        const auto n = label.isEmpty() ? "Slot " + juce::String (index + 1) : "S" + juce::String (index + 1) + " " + label;
+        const auto n = boundLabel.isEmpty() ? "Slot " + juce::String (index + 1) : "S" + juce::String (index + 1) + " " + boundLabel;
         return n.substring (0, maximumLength);
     }
     void setLabel (const juce::String& s)
     {
         const juce::SpinLock::ScopedLockType l (lock);
-        label = s;
+        boundLabel = s;
     }
 
 private:
     const int index;
     mutable juce::SpinLock lock;
-    juce::String label;
+    juce::String boundLabel;
 };
 
 //==============================================================================
@@ -48,11 +48,31 @@ juce::AudioProcessorValueTreeState::ParameterLayout TetherProcessor::createLayou
     l.add (std::make_unique<AudioParameterInt> (ParameterID { ids::pset, 1 }, "PSET", 0, 99, 0,
                                                 AudioParameterIntAttributes().withStringFromValueFunction (
                                                     [] (int v, int) { return v == 0 ? String ("--") : String (v).paddedLeft ('0', 2); })));
+
+    auto db = AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return v <= -59.9f ? String ("-inf") : String (v, 1) + " dB"; });
+    l.add (std::make_unique<AudioParameterBool> (ParameterID { ids::audioFrom, 1 }, "Audio from norns", false));
+    l.add (std::make_unique<AudioParameterBool> (ParameterID { ids::audioTo, 1 }, "Audio to norns", false));
+    l.add (std::make_unique<AudioParameterInt> (ParameterID { ids::audioBuffer, 1 }, "Audio buffer", 10, 250, 40,
+                                                AudioParameterIntAttributes().withStringFromValueFunction ([] (int v, int) { return String (v) + " ms"; })));
+    l.add (std::make_unique<AudioParameterChoice> (ParameterID { ids::audioBits, 1 }, "Audio bits", StringArray { "24-BIT", "16-BIT" }, 0));
+    l.add (std::make_unique<AudioParameterFloat> (ParameterID { ids::audioFromGain, 1 }, "From norns level", NormalisableRange<float> (-60.0f, 12.0f, 0.1f), 0.0f, db));
+    l.add (std::make_unique<AudioParameterFloat> (ParameterID { ids::audioToGain, 1 }, "To norns level", NormalisableRange<float> (-60.0f, 12.0f, 0.1f), 0.0f, db));
+    l.add (std::make_unique<AudioParameterBool> (ParameterID { ids::audioThru, 1 }, "Thru", true));
     return l;
 }
 
+// TETHER: an instrument, norns' audio out. TETHER FX: an effect, its input to norns, norns' audio
+// added to (THRU) or instead of its input.
+juce::AudioProcessor::BusesProperties TetherProcessor::buses()
+{
+    if (isFx)
+        return BusesProperties().withInput ("Input", juce::AudioChannelSet::stereo(), true)
+                                .withOutput ("Output", juce::AudioChannelSet::stereo(), true);
+    return BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true);
+}
+
 TetherProcessor::TetherProcessor()
-    : AudioProcessor (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
+    : AudioProcessor (buses()),
       apvts (*this, nullptr, "TETHER", createLayout())
 {
     for (int s = 0; s < kSlots; ++s)
@@ -63,6 +83,13 @@ TetherProcessor::TetherProcessor()
     syncRaw = link.raw (ids::sync);
     linkRaw = apvts.getRawParameterValue (ids::link);
     psetRaw = apvts.getRawParameterValue (ids::pset);
+    aFrom = apvts.getRawParameterValue (ids::audioFrom);
+    aTo = apvts.getRawParameterValue (ids::audioTo);
+    aBuffer = apvts.getRawParameterValue (ids::audioBuffer);
+    aBits = apvts.getRawParameterValue (ids::audioBits);
+    aFromGain = apvts.getRawParameterValue (ids::audioFromGain);
+    aToGain = apvts.getRawParameterValue (ids::audioToGain);
+    aThru = apvts.getRawParameterValue (ids::audioThru);
 
     for (int k = 0; k < 3; ++k)
     {
@@ -77,28 +104,39 @@ TetherProcessor::TetherProcessor()
 
     norns.setHost (getHost().toStdString());
     norns.start();
+    audio.start();
     startTimerHz (30);
 }
 
 TetherProcessor::~TetherProcessor()
 {
     stopTimer();
+    audio.stop();
     norns.stop();
 }
 
 bool TetherProcessor::isBusesLayoutSupported (const BusesLayout& l) const
 {
     const auto o = l.getMainOutputChannelSet();
-    return o == juce::AudioChannelSet::stereo() || o == juce::AudioChannelSet::mono() || o == juce::AudioChannelSet::disabled();
+    const bool outOk = o == juce::AudioChannelSet::stereo() || o == juce::AudioChannelSet::mono();
+    if (isFx) return outOk && l.getMainInputChannelSet() == o;
+    return outOk || o == juce::AudioChannelSet::disabled();
 }
 
-void TetherProcessor::prepareToPlay (double, int) {}
+void TetherProcessor::prepareToPlay (double sampleRate, int)
+{
+    sampleRateNow = sampleRate;
+    dryDelay.setSize (2, (int) std::ceil (sampleRate * 0.3) + 8);   // up to the 250 ms buffer
+    dryDelay.clear();
+    dryWrite = 0;
+    latencyNow = -1;                                     // reported again by the timer
+}
 
 void TetherProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
     juce::ScopedNoDenormals nd;
-    buffer.clear();
     midi.clear();
+    audioBlock (buffer);
 
     double bpm = live.bpm.load (std::memory_order_relaxed), ppq = -1.0;
     bool playing = false;
@@ -143,10 +181,56 @@ void TetherProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Midi
     }
 }
 
+// The audio stream. TETHER: the output is what comes from norns. TETHER FX: the input goes to norns
+// first; then the output is the input, delayed as much as the reported latency (THRU), plus norns.
+void TetherProcessor::audioBlock (juce::AudioBuffer<float>& buffer)
+{
+    const int n = buffer.getNumSamples();
+    const int outCh = juce::jmin (2, getTotalNumOutputChannels());
+    const int inCh = isFx ? juce::jmin (2, getTotalNumInputChannels()) : 0;
+    for (int c = outCh; c < buffer.getNumChannels(); ++c) buffer.clear (c, 0, n);
+    const float* in[2] = { inCh > 0 ? buffer.getReadPointer (0) : nullptr, inCh > 1 ? buffer.getReadPointer (1) : nullptr };
+    float* out[2] = { outCh > 0 ? buffer.getWritePointer (0) : nullptr, outCh > 1 ? buffer.getWritePointer (1) : nullptr };
+    const float toGain = juce::Decibels::decibelsToGain (aToGain->load(), -59.9f);
+    const float fromGain = juce::Decibels::decibelsToGain (aFromGain->load(), -59.9f);
+    const bool thru = isFx && aThru->load() > 0.5f;
+
+    if (thru)
+    {
+        // the input goes to norns as it is, then the dry signal waits the reported latency
+        audio.send (in, inCh, n, getSampleRate(), toGain);
+        const int d = dryLatency.load (std::memory_order_relaxed);
+        const int len = dryDelay.getNumSamples();
+        if (d > 0 && len > d)
+        {
+            for (int c = 0; c < outCh; ++c)
+            {
+                float* x = out[c];
+                float* dl = dryDelay.getWritePointer (c);
+                int w = dryWrite;
+                for (int i = 0; i < n; ++i)
+                {
+                    dl[w] = x[i];
+                    int rd = w - d;
+                    if (rd < 0) rd += len;
+                    x[i] = dl[rd];
+                    if (++w == len) w = 0;
+                }
+            }
+            dryWrite = (dryWrite + n) % len;
+        }
+        audio.receive (out, outCh, n, getSampleRate(), fromGain, true);   // norns on top
+        return;
+    }
+    // no dry signal: send (FX), then the output is norns alone
+    audio.process (in, inCh, out, outCh, n, getSampleRate(), toGain, fromGain, false);
+}
+
 //==============================================================================
 void TetherProcessor::timerCallback()
 {
     norns.setEnabled (linkRaw->load() > 0.5f);
+    updateAudio();
 
     // the latest frame, for snapshots and the recording
     if (norns.readScreen (lastFrame.data(), lastFrameSerial))
@@ -424,6 +508,31 @@ void TetherProcessor::setStateInformation (const void* data, int size)
         norns.setHost (getHost().toStdString());
         for (int s = 0; s < kSlots; ++s) norns.bindSlot (s, slotId (s).toStdString());
         refreshSlotNames();
+    }
+}
+
+// the stream follows the parameters and the norns address; latency is the buffer while audio comes in
+void TetherProcessor::updateAudio()
+{
+    const bool on = linkRaw->load() > 0.5f;
+    const bool from = on && aFrom->load() > 0.5f, to = on && isFx && aTo->load() > 0.5f;
+    audio.setFromNorns (from);
+    audio.setToNorns (to);
+    audio.setBufferMs (juce::roundToInt (aBuffer->load()));
+    audio.setFormat (juce::roundToInt (aBits->load()) == 1 ? tether::audio::S16 : tether::audio::S24);
+    const char* portEnv = std::getenv ("TETHER_AUDIO_PORT");          // tests: a daemon on another port
+    const uint16_t port = portEnv != nullptr ? (uint16_t) std::atoi (portEnv) : tether::audio::kAudioPort;
+    const auto ip = norns.ipAddress();
+    const auto key = ip + ":" + std::to_string (port);
+    if (key != audioTarget) { audioTarget = key; audio.setTarget (ip, port); }
+    if (audio.wantsDaemon()) norns.requestAudioDaemon();
+
+    const int lat = from ? juce::roundToInt (aBuffer->load() * sampleRateNow / 1000.0) : 0;
+    if (lat != latencyNow)
+    {
+        latencyNow = lat;
+        dryLatency.store (juce::jmin (lat, dryDelay.getNumSamples() - 1));
+        setLatencySamples (lat);
     }
 }
 

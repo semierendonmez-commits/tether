@@ -3,36 +3,126 @@
   "colour": "#d9dde6",
   "mirror": true,
   "outputs": [
-    { "name": "K1", "event": "TRIG", "a": 1 },
-    { "name": "K2", "event": "TRIG", "a": 2 },
-    { "name": "K3", "event": "TRIG", "a": 3 },
-    { "name": "E1" },
-    { "name": "E2" },
-    { "name": "E3" },
-    { "name": "SCRIPT", "event": "DATA" }
+    {
+      "name": "K1",
+      "event": "TRIG",
+      "a": 1
+    },
+    {
+      "name": "K2",
+      "event": "TRIG",
+      "a": 2
+    },
+    {
+      "name": "K3",
+      "event": "TRIG",
+      "a": 3
+    },
+    {
+      "name": "E1"
+    },
+    {
+      "name": "E2"
+    },
+    {
+      "name": "E3"
+    },
+    {
+      "name": "SCRIPT",
+      "event": "DATA"
+    }
   ],
   "inputs": [
-    { "name": "SLOT1", "param": "slot01" },
-    { "name": "SLOT2", "param": "slot02" },
-    { "name": "SLOT3", "param": "slot03" },
-    { "name": "SLOT4", "param": "slot04" },
-    { "name": "SLOT5", "param": "slot05" },
-    { "name": "SLOT6", "param": "slot06" },
-    { "name": "SLOT7", "param": "slot07" },
-    { "name": "SLOT8", "param": "slot08" },
-    { "name": "SLOT9", "param": "slot09" },
-    { "name": "SLOT10", "param": "slot10" },
-    { "name": "SLOT11", "param": "slot11" },
-    { "name": "SLOT12", "param": "slot12" },
-    { "name": "SLOT13", "param": "slot13" },
-    { "name": "SLOT14", "param": "slot14" },
-    { "name": "SLOT15", "param": "slot15" },
-    { "name": "SLOT16", "param": "slot16" },
-    { "name": "PRESS1", "trigger": true },
-    { "name": "PRESS2", "trigger": true },
-    { "name": "PRESS3", "trigger": true }
+    {
+      "name": "SLOT1",
+      "param": "slot01"
+    },
+    {
+      "name": "SLOT2",
+      "param": "slot02"
+    },
+    {
+      "name": "SLOT3",
+      "param": "slot03"
+    },
+    {
+      "name": "SLOT4",
+      "param": "slot04"
+    },
+    {
+      "name": "SLOT5",
+      "param": "slot05"
+    },
+    {
+      "name": "SLOT6",
+      "param": "slot06"
+    },
+    {
+      "name": "SLOT7",
+      "param": "slot07"
+    },
+    {
+      "name": "SLOT8",
+      "param": "slot08"
+    },
+    {
+      "name": "SLOT9",
+      "param": "slot09"
+    },
+    {
+      "name": "SLOT10",
+      "param": "slot10"
+    },
+    {
+      "name": "SLOT11",
+      "param": "slot11"
+    },
+    {
+      "name": "SLOT12",
+      "param": "slot12"
+    },
+    {
+      "name": "SLOT13",
+      "param": "slot13"
+    },
+    {
+      "name": "SLOT14",
+      "param": "slot14"
+    },
+    {
+      "name": "SLOT15",
+      "param": "slot15"
+    },
+    {
+      "name": "SLOT16",
+      "param": "slot16"
+    },
+    {
+      "name": "PRESS1",
+      "trigger": true
+    },
+    {
+      "name": "PRESS2",
+      "trigger": true
+    },
+    {
+      "name": "PRESS3",
+      "trigger": true
+    }
   ],
-  "exclude": ["link", "sync"],
-  "setbook": { "rules": { "slot*": "GLIDE", "pset": "JUMP" }, "exclude": [] },
-  "blackbox": { "exclude": [] }
+  "exclude": [
+    "link",
+    "sync",
+    "audio*"
+  ],
+  "setbook": {
+    "rules": {
+      "slot*": "GLIDE",
+      "pset": "JUMP"
+    },
+    "exclude": []
+  },
+  "blackbox": {
+    "exclude": []
+  }
 }

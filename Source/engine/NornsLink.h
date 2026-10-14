@@ -107,6 +107,8 @@ public:
     void psetSave (int n);
     void requestDump();
     void setScreenFps (int fps);                          // 0: no mirror (editor closed)
+    void requestAudioDaemon();                            // the mod starts tether-audio
+    std::string ipAddress() const;                        // the resolved norns, "" until found
 
     // ---- slots: host parameters bound to norns parameters --------------------------------------------
     void bindSlot (int slot, const std::string& paramId); // "" unbinds (message thread)
@@ -173,6 +175,7 @@ private:
     uint32_t hostSeen = 0;
     std::shared_ptr<Resolve> resolving;
     Address norns;
+    std::string addrIp, addrText;                         // stateMutex
     double resolvedAt = -1.0e9, nextResolve = 0.0;
 
     // commands queued from the message thread

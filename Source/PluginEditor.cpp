@@ -178,6 +178,38 @@ private:
 };
 
 //==============================================================================
+// NET | AUDIO, on the LINK window's title bar.
+class TetherEditor::Tabs : public juce::Component
+{
+public:
+    Tabs (ui::Skin& s, std::function<int()> g, std::function<void (int)> st) : skin (s), get (std::move (g)), set (std::move (st)) { setRepaintsOnMouseActivity (true); }
+    void paint (juce::Graphics& g) override
+    {
+        const auto& t = skin.t();
+        const char* names[] = { "NET", "AUDIO" };
+        const int w = getWidth() / 2;
+        for (int i = 0; i < 2; ++i)
+        {
+            auto r = juce::Rectangle<int> (i * w, 0, w - 2, getHeight());
+            const bool on = get() == i;
+            g.setColour (on ? t.panel : t.titleA);
+            g.fillRect (r);
+            g.setColour (t.panelLo.darker (0.4f));
+            g.drawRect (r);
+            g.setColour (on ? t.text : t.titleText.withAlpha (0.8f));
+            g.setFont (ui::labelFont (8.0f));
+            g.drawText (names[i], r, juce::Justification::centred);
+        }
+    }
+    void mouseDown (const juce::MouseEvent& e) override { set (e.x < getWidth() / 2 ? 0 : 1); repaint(); }
+
+private:
+    ui::Skin& skin;
+    std::function<int()> get;
+    std::function<void (int)> set;
+};
+
+//==============================================================================
 TetherEditor::TetherEditor (TetherProcessor& p) : AudioProcessorEditor (p), proc (p)
 {
     skin.index = juce::jlimit (0, ui::numThemes() - 1, (int) proc.apvts.state.getProperty ("theme", 0));
@@ -236,6 +268,26 @@ TetherEditor::TetherEditor (TetherProcessor& p) : AudioProcessorEditor (p), proc
 
     proc.onMediaMessage = [this] (const juce::String& m) { hint (m); };
 
+    // the AUDIO page
+    tabs = std::make_unique<Tabs> (skin, [this] { return linkPage; }, [this] (int i) { setLinkPage (i); });
+    addAndMakeVisible (*tabs);
+    fromT = make<ui::Toggle> (*this, "FROM NORNS: norns' output (what goes to its headphones) comes out of this plug-in. "
+                                     "Needs tether-audio on norns: the mod starts it. Latency = BUFFER, reported to the host.",
+                              skin, P (ids::audioFrom), "FROM NORNS", "FROM NORNS", this);
+    toT = make<ui::Toggle> (*this, "TO NORNS: this track's audio goes into norns' input (beside the ADC: softcut and the engine hear it).",
+                            skin, P (ids::audioTo), "TO NORNS", "TO NORNS", this);
+    thruT = make<ui::Toggle> (*this, "THRU: the track's own audio stays (delayed by the buffer, so it lines up with norns). Off: only norns.",
+                              skin, P (ids::audioThru), "THRU", "THRU", this);
+    bufferBox = make<ui::NumberBox> (*this, "BUFFER: how much audio waits before it plays, both ways. More rides out Wi-Fi hiccups; "
+                                            "a cable runs well at 15-20 ms.", skin, P (ids::audioBuffer), "BUFFER", this);
+    bitsCell = make<ui::MenuCell> (*this, "BITS: 24-bit (2.3 Mbit/s each way at 48 kHz) or 16-bit (1.5 Mbit/s).", skin, P (ids::audioBits), "BITS", this);
+    fromGainBox = make<ui::NumberBox> (*this, "FROM LEVEL: norns' audio here.", skin, P (ids::audioFromGain), "FROM LEVEL", this);
+    toGainBox = make<ui::NumberBox> (*this, "TO LEVEL: what goes to norns.", skin, P (ids::audioToGain), "TO LEVEL", this);
+    for (auto* b : { bufferBox.get(), fromGainBox.get(), toGainBox.get() }) b->fontSize = 17.0f;
+    if (! TetherProcessor::isFx) { toT->setVisible (false); thruT->setVisible (false); toGainBox->setVisible (false); }
+    linkPage = juce::jlimit (0, 1, (int) proc.apvts.state.getProperty ("linkPage", 0));
+    setLinkPage (linkPage);
+
     setSize (kW, kH);
     proc.editorOpened();
     startTimerHz (30);
@@ -292,6 +344,49 @@ void TetherEditor::resized()
     clearBtn.setBounds (lc.removeFromBottom (28).removeFromRight (168));
     lc.removeFromBottom (6);
     infoArea = lc;
+
+    // the title bar's right end: NET | AUDIO
+    auto bar = linkWin.reduced (4).removeFromTop (17);
+    tabs->setBounds (bar.removeFromRight (104).reduced (0, 1).translated (-4, 0));
+
+    auto ac = contentOf (linkWin).reduced (8, 6);
+    auto a1 = ac.removeFromTop (38).withTrimmedTop (12);
+    fromT->setBounds (a1.removeFromLeft (a1.getWidth() / 2 - 3));
+    a1.removeFromLeft (6);
+    toT->setBounds (a1);
+    ac.removeFromTop (6);
+    auto a2 = ac.removeFromTop (40);
+    bufferBox->setBounds (a2.removeFromLeft (84));
+    a2.removeFromLeft (6);
+    bitsCell->setBounds (a2.removeFromLeft (92));
+    a2.removeFromLeft (6);
+    thruT->setBounds (a2.withTrimmedTop (12));
+    ac.removeFromTop (6);
+    auto a3 = ac.removeFromTop (40);
+    fromGainBox->setBounds (a3.removeFromLeft (a3.getWidth() / 2 - 3));
+    a3.removeFromLeft (6);
+    toGainBox->setBounds (a3);
+    ac.removeFromTop (8);
+    audioArea = ac;
+}
+
+void TetherEditor::setLinkPage (int i)
+{
+    linkPage = juce::jlimit (0, 1, i);
+    proc.apvts.state.setProperty ("linkPage", linkPage, nullptr);
+    const bool net = linkPage == 0;
+    for (juce::Component* c : { (juce::Component*) &hostField, (juce::Component*) linkT.get(), (juce::Component*) syncCell.get(), (juce::Component*) psetBox.get(),
+                                (juce::Component*) &loadBtn, (juce::Component*) &saveBtn, (juce::Component*) &clearBtn, (juce::Component*) &refreshBtn, (juce::Component*) &themeBtn })
+        c->setVisible (net);
+    fromT->setVisible (! net);
+    bufferBox->setVisible (! net);
+    bitsCell->setVisible (! net);
+    fromGainBox->setVisible (! net);
+    toT->setVisible (! net && TetherProcessor::isFx);
+    thruT->setVisible (! net && TetherProcessor::isFx);
+    toGainBox->setVisible (! net && TetherProcessor::isFx);
+    if (tabs) tabs->repaint();
+    repaint (linkWin);
 }
 
 void TetherEditor::paint (juce::Graphics& g)
@@ -319,6 +414,7 @@ void TetherEditor::paint (juce::Graphics& g)
 void TetherEditor::paintLink (juce::Graphics& g, juce::Rectangle<int> c)
 {
     const auto& t = skin.t();
+    if (linkPage == 1) { ui::draw::smallLabel (g, "STREAM", c.reduced (8, 6).removeFromTop (12), t); paintAudio (g); return; }
     ui::draw::smallLabel (g, "NORNS (HOST OR IP)", c.reduced (8, 6).removeFromTop (14), t);
 
     // the state, in a screen well
@@ -339,6 +435,66 @@ void TetherEditor::paintLink (juce::Graphics& g, juce::Rectangle<int> c)
     put ("STATE", statusName (s.status));
     put ("MOD", s.mod ? "v" + juce::String (s.version) : juce::String ("--"));
     put ("PING", s.latencyMs >= 0.0f ? juce::String (s.latencyMs, 1) + " ms" : juce::String ("--"));
+}
+
+// the AUDIO page's screen: the stream's state, both ends, and three meters
+void TetherEditor::paintAudio (juce::Graphics& g)
+{
+    const auto& t = skin.t();
+    auto w = audioArea;
+    if (w.getHeight() < 30) return;
+    ui::draw::screenWell (g, w, t);
+    const auto st = proc.audio.stats();
+    const bool from = proc.apvts.getRawParameterValue (ids::audioFrom)->load() > 0.5f;
+    const bool to = TetherProcessor::isFx && proc.apvts.getRawParameterValue (ids::audioTo)->load() > 0.5f;
+
+    // meters on the right: FROM (norns), TO L / R
+    auto meters = w.removeFromRight (46).reduced (5, 6);
+    auto bar = [&] (juce::Rectangle<int> r, float v, const juce::String& l)
+    {
+        auto lab = r.removeFromBottom (11);
+        g.setColour (t.ink.withAlpha (0.25f));
+        g.drawRect (r);
+        const float db = juce::jlimit (0.0f, 1.0f, (juce::Decibels::gainToDecibels (v, -60.0f) + 60.0f) / 60.0f);
+        const int h = juce::roundToInt ((float) (r.getHeight() - 2) * db);
+        g.setColour (v > 0.98f ? juce::Colour (0xffe8302a) : ui::readable (t, t.thermal (0.3f + 0.6f * db)));
+        g.fillRect (r.getX() + 1, r.getBottom() - 1 - h, r.getWidth() - 2, h);
+        g.setColour (t.ink.withAlpha (0.7f));
+        g.setFont (ui::screenFont (12.0f));
+        g.drawText (l, lab, juce::Justification::centred);
+    };
+    if (TetherProcessor::isFx)
+    {
+        const int mw = meters.getWidth() / 3;
+        bar (meters.removeFromLeft (mw).reduced (1, 0), st.inLevel, "IN");
+        bar (meters.removeFromLeft (mw).reduced (1, 0), st.outL, "L");
+        bar (meters.reduced (1, 0), st.outR, "R");
+    }
+    else bar (meters.withSizeKeepingCentre (14, meters.getHeight()), st.inLevel, "IN");
+
+    g.setFont (ui::screenFont (17.0f));
+    auto line = w.reduced (6, 3);
+    auto put = [&] (const juce::String& a, const juce::String& b)
+    {
+        if (line.getHeight() < 16) return;
+        auto l = line.removeFromTop (17);
+        g.setColour (t.ink.withAlpha (0.65f));
+        g.drawText (a, l, juce::Justification::centredLeft);
+        g.setColour (t.ink);
+        g.drawText (b, l, juce::Justification::centredRight);
+    };
+    juce::String state = "OFF";
+    if (from || to) state = st.daemon ? (st.playing || ! from ? "STREAMING" : "BUFFERING") : "STARTING";
+    put ("AUDIO", state);
+    if (st.daemon)
+    {
+        put ("NORNS", juce::String (st.norns.rate) + " / " + juce::String (st.norns.period) + (st.norns.xruns > 0 ? "  XR " + juce::String (st.norns.xruns) : juce::String()));
+        if (from) put ("HERE", juce::String (st.fillMs, 1) + " ms  " + juce::String (juce::roundToInt (st.driftPpm)) + " ppm");
+        if (to) put ("THERE", juce::String (st.norns.fillMs, 1) + " ms");
+        put ("LOST", juce::String (st.missing + st.norns.lost) + "  GAPS " + juce::String (st.underruns + st.norns.underruns));
+    }
+    else if (from || to) put ("", "waiting for tether-audio");
+    else if (! TetherProcessor::isFx) put ("", "TETHER FX sends audio");
 }
 
 void TetherEditor::pump (float dt)
@@ -372,6 +528,7 @@ void TetherEditor::pump (float dt)
     repaint (nornsWin.withHeight (24));
     repaint (slotsWin.withHeight (24));
     repaint (infoArea);
+    if (linkPage == 1) repaint (audioArea);
 }
 
 void TetherEditor::setTheme (int i)

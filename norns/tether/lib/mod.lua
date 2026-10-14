@@ -315,6 +315,28 @@ handlers["/tether/clock"] = function(args)
   apply_clock(tonumber(args[1]), (tonumber(args[2]) or 0) > 0, tonumber(args[3]) or 0)
 end
 
+-- tether-audio (the audio stream, docs/AUDIO.md): a plug-in asks, the mod starts it once. The
+-- daemon takes UDP 10112; a second copy finds it taken and exits, so asking twice is harmless.
+local AUDIO_BIN = { aarch64 = "tether-audio-arm64", armv7l = "tether-audio-armhf", armv6l = "tether-audio-armhf", armhf = "tether-audio-armhf" }
+
+local function start_audio()
+  local t = now()
+  if state.audio_started ~= nil and t - state.audio_started < 3 then return end
+  state.audio_started = t
+  local dir = (_path and _path.code or "/home/we/dust/code/") .. "tether/bin/"
+  local cmd = "cd '" .. dir .. "' && a=$(uname -m) && case $a in "
+  for arch, bin in pairs(AUDIO_BIN) do cmd = cmd .. arch .. ") b=" .. bin .. ";; " end
+  cmd = cmd .. "*) b=tether-audio-$a;; esac && chmod +x \"$b\" 2>/dev/null; "
+            .. "(nohup ./\"$b\" > /tmp/tether-audio.log 2>&1 &)"
+  os.execute(cmd)
+  print("tether: starting tether-audio")
+end
+state.start_audio = start_audio
+
+handlers["/tether/audio/start"] = function()
+  start_audio()
+end
+
 handlers["/tether/pset/load"] = function(args)
   local n = math.floor(args[1] or 0)
   if n > 0 then pcall(params.read, params, n) end

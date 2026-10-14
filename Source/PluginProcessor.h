@@ -2,7 +2,8 @@
 // plug-in mirrors the screen, plays the keys and encoders, lists the running script's parameters,
 // and binds 32 host parameters (SLOT 1-32) to any of them, so the host automates norns and
 // CONDUIT patches into it. The norns keys and encoders come back as family events and values.
-// No audio: the norns makes the sound.
+// Audio (docs/AUDIO.md): norns' output streams in through tether-audio on norns. TETHER (an
+// instrument) plays it; TETHER FX also sends its input to norns' input and keeps its dry signal.
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -10,6 +11,7 @@
 #include "FamilyManifest.h"
 #include "Params.h"
 #include "engine/NornsLink.h"
+#include "engine/AudioLink.h"
 #include <memory>
 
 class TetherProcessor : public juce::AudioProcessor, private juce::Timer
@@ -46,6 +48,8 @@ public:
     juce::AudioProcessorValueTreeState apvts;
     family::Link link { *this, apvts, family::kManifest };
     tether::NornsLink norns;
+    tether::AudioLink audio;
+    static constexpr bool isFx = ! JucePlugin_IsSynth;   // TETHER FX: sends its input to norns
 
     // ---- the slots (message thread) ---------------------------------------------------------------
     // binds slot s to a norns parameter; the slot jumps to the parameter's value, so nothing moves
@@ -90,6 +94,7 @@ public:
     } live;
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
+    static BusesProperties buses();
     void tick() { timerCallback(); }         // tests and tools: one message-thread pass
 
 private:
@@ -101,6 +106,16 @@ private:
     std::array<const family::Param*, tether::kSlots> slotRaw {};
     const family::Param* syncRaw = nullptr;
     std::atomic<float>* linkRaw = nullptr, *psetRaw = nullptr;
+    std::atomic<float>* aFrom = nullptr, *aTo = nullptr, *aBuffer = nullptr, *aBits = nullptr, *aFromGain = nullptr, *aToGain = nullptr, *aThru = nullptr;
+    void updateAudio();
+    void audioBlock (juce::AudioBuffer<float>&);
+    int latencyNow = -1;
+    std::string audioTarget;
+    double sampleRateNow = 48000.0;
+    // TETHER FX: the dry signal waits as long as the reported latency, so it stays aligned
+    juce::AudioBuffer<float> dryDelay;
+    int dryWrite = 0;
+    std::atomic<int> dryLatency { 0 };
 
     int pK[3] { -1, -1, -1 }, pE[3] { -1, -1, -1 }, pPress[3] { -1, -1, -1 }, pScript = -1;
     float eAcc[3] { 0.5f, 0.5f, 0.5f };      // audio thread
@@ -114,7 +129,6 @@ private:
     struct EncodeJob;
     bool recording = false;
     double recStart = 0.0;
-    uint32_t recSerial = 0;
     std::vector<uint8_t> recFrames;                       // 8192 bytes a frame
     std::vector<double> recTimes;
     std::array<uint8_t, tether::kScreenW * tether::kScreenH> lastFrame {};

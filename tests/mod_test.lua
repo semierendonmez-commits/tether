@@ -185,6 +185,20 @@ src.selected = 1
 rx("/tether/clock", { 140, 1, 1 })
 check(tempo_set == 140 and started == 1, "tempo only mode does not start")
 
+-- ---- audio: the daemon is started once, for this machine's architecture
+local executed = {}
+os.execute = function(c) executed[#executed + 1] = c; return true end
+_path = { code = "/home/we/dust/code/" }
+rx("/tether/audio/start", {})
+rx("/tether/audio/start", {})
+check(#executed == 1, "audio daemon started once: " .. #executed)
+check(executed[1] and executed[1]:find("/home/we/dust/code/tether/bin/", 1, true) ~= nil, "from the mod's bin folder")
+check(executed[1] and executed[1]:find("armv7l) b=tether-audio-armhf;;", 1, true) ~= nil and executed[1]:find("aarch64) b=tether-audio-arm64;;", 1, true) ~= nil, "picks the binary by uname -m")
+check(executed[1] and executed[1]:find("nohup", 1, true) ~= nil and executed[1]:find("&)", 1, true) ~= nil, "in the background")
+t_now = t_now + 5
+rx("/tether/audio/start", {})
+check(#executed == 2, "asked again later: started again (a second copy exits by itself)")
+
 -- ---- pset
 rx("/tether/pset/load", { 3 })
 rx("/tether/pset/save", { 4, "x" })

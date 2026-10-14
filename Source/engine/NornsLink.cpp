@@ -207,6 +207,19 @@ void NornsLink::requestDump()
 
 void NornsLink::setScreenFps (int fps) { screenFps.store (std::clamp (fps, 0, 30)); }
 
+void NornsLink::requestAudioDaemon()
+{
+    osc::Message m ("/tether/audio/start");
+    std::lock_guard<std::mutex> l (cmdMutex);
+    cmds.push_back (std::move (m));
+}
+
+std::string NornsLink::ipAddress() const
+{
+    std::lock_guard<std::mutex> l (stateMutex);
+    return addrIp;
+}
+
 // ---- slots ----------------------------------------------------------------------------------------
 void NornsLink::bindSlot (int slot, const std::string& paramId)
 {
@@ -257,7 +270,10 @@ NornsLink::Snapshot NornsLink::snapshot (bool withParams) const
         for (const auto& p : params) s.received += p.known ? 1 : 0;
         if (withParams) s.params = params;
     }
-    s.address = norns.valid ? norns.text() : std::string();
+    {
+        std::lock_guard<std::mutex> l (stateMutex);
+        s.address = addrText;
+    }
     return s;
 }
 
@@ -385,6 +401,11 @@ void NornsLink::pump (double now, int waitMs)
         }
     }
 
+    {
+        std::lock_guard<std::mutex> l (stateMutex);
+        addrIp = norns.valid ? norns.ip() : std::string();
+        addrText = norns.valid ? norns.text() : std::string();
+    }
     if (! norns.valid) return;
 
     // hello until welcomed, then a ping a second

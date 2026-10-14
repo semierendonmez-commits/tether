@@ -7,7 +7,7 @@ if(APPLE)
     endif()
 endif()
 
-project(TETHER VERSION 0.1.0 LANGUAGES C CXX)
+project(TETHER VERSION 0.2.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -36,6 +36,18 @@ target_include_directories(TetherEngineTests PRIVATE Source tests)
 target_link_libraries(TetherEngineTests PRIVATE ${TTH_SYS_LIBS})
 add_test(NAME engine COMMAND TetherEngineTests)
 set_tests_properties(engine PROPERTIES ENVIRONMENT "TETHER_TESTS_DIR=${CMAKE_CURRENT_SOURCE_DIR}/tests")
+
+# tether-audio, the norns side of the audio stream (the norns builds come from scripts/build-norns-audio.sh),
+# and its end-to-end test against a real JACK server (dummy driver), Linux only
+if(UNIX AND NOT APPLE)
+    add_executable(tether-audio norns/tether-audio/tether_audio.cpp)
+    target_include_directories(tether-audio PRIVATE Source)
+    target_link_libraries(tether-audio PRIVATE ${TTH_SYS_LIBS} ${CMAKE_DL_LIBS})
+    add_executable(TetherAudioE2E tests/AudioE2E.cpp)
+    target_include_directories(TetherAudioE2E PRIVATE Source)
+    target_link_libraries(TetherAudioE2E PRIVATE ${TTH_SYS_LIBS} ${CMAKE_DL_LIBS})
+    add_test(NAME audio COMMAND TetherAudioE2E $<TARGET_FILE:tether-audio>)
+endif()
 
 # the norns mod itself, against a stub norns
 find_program(TTH_LUA NAMES lua5.4 lua5.3 lua)
@@ -95,7 +107,7 @@ set(PLUGIN_SOURCES
     Source/ui/ParamList.cpp)
 set(TTH_DEFS JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0)
 
-# TETHER: an instrument with MIDI in and out, no sound of its own (norns makes the sound)
+# TETHER: an instrument; norns' audio comes out of it
 juce_add_plugin(Tether
     PRODUCT_NAME "TETHER"
     COMPANY_NAME "Semi"
@@ -111,21 +123,43 @@ juce_add_plugin(Tether
     COPY_PLUGIN_AFTER_BUILD FALSE
     AU_MAIN_TYPE kAudioUnitType_MusicDevice
     VST3_CATEGORIES Instrument Network
-    DESCRIPTION "norns from the DAW: screen, keys, encoders, parameters, automation")
+    DESCRIPTION "norns from the DAW: screen, keys, encoders, parameters, automation, audio")
 
-target_sources(Tether PRIVATE ${PLUGIN_SOURCES})
-target_include_directories(Tether PRIVATE Source)
-target_compile_definitions(Tether PUBLIC ${TTH_DEFS})
-target_link_libraries(Tether
-    PRIVATE TetherData juce::juce_audio_utils ${TTH_SYS_LIBS}
-    PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
-if(TTH_LTO)
-    target_link_libraries(Tether PUBLIC juce::juce_recommended_lto_flags)
-endif()
-family_sdk_add(Tether MANIFEST ${CMAKE_CURRENT_SOURCE_DIR}/family.json)
+# TETHER FX: the same, as an effect: its input goes to norns, norns comes back on top of it
+juce_add_plugin(TetherFx
+    PRODUCT_NAME "TETHER FX"
+    COMPANY_NAME "Semi"
+    BUNDLE_ID "com.semi.tetherfx"
+    PLUGIN_MANUFACTURER_CODE Semi
+    PLUGIN_CODE Tthf
+    FORMATS ${TTH_FORMATS}
+    IS_SYNTH FALSE
+    NEEDS_MIDI_INPUT FALSE
+    NEEDS_MIDI_OUTPUT FALSE
+    IS_MIDI_EFFECT FALSE
+    EDITOR_WANTS_KEYBOARD_FOCUS TRUE
+    COPY_PLUGIN_AFTER_BUILD FALSE
+    AU_MAIN_TYPE kAudioUnitType_Effect
+    VST3_CATEGORIES Fx Network
+    DESCRIPTION "TETHER as an effect: a track's audio to norns and back")
 
-set(TTH_APP_DEFS ${TTH_DEFS} JucePlugin_Name="TETHER" JucePlugin_Manufacturer="Semi" JucePlugin_VersionString="0.1.0"
+foreach(T Tether TetherFx)
+    target_sources(${T} PRIVATE ${PLUGIN_SOURCES})
+    target_include_directories(${T} PRIVATE Source)
+    target_compile_definitions(${T} PUBLIC ${TTH_DEFS})
+    target_link_libraries(${T}
+        PRIVATE TetherData juce::juce_audio_utils ${TTH_SYS_LIBS}
+        PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
+    if(TTH_LTO)
+        target_link_libraries(${T} PUBLIC juce::juce_recommended_lto_flags)
+    endif()
+    family_sdk_add(${T} MANIFEST ${CMAKE_CURRENT_SOURCE_DIR}/family.json)
+endforeach()
+
+set(TTH_APP_DEFS ${TTH_DEFS} JucePlugin_Name="TETHER" JucePlugin_Manufacturer="Semi" JucePlugin_VersionString="0.2.0"
     JucePlugin_IsSynth=1 JucePlugin_IsMidiEffect=0 JucePlugin_WantsMidiInput=1 JucePlugin_ProducesMidiOutput=0)
+set(TTH_FX_DEFS ${TTH_DEFS} JucePlugin_Name="TETHER FX" JucePlugin_Manufacturer="Semi" JucePlugin_VersionString="0.2.0"
+    JucePlugin_IsSynth=0 JucePlugin_IsMidiEffect=0 JucePlugin_WantsMidiInput=0 JucePlugin_ProducesMidiOutput=0)
 
 # ---- processor tests (JUCE) ----------------------------------------------------------------------
 juce_add_console_app(TetherProcessorTests PRODUCT_NAME "TetherProcessorTests")
@@ -136,6 +170,23 @@ target_link_libraries(TetherProcessorTests PRIVATE TetherData juce::juce_audio_u
 family_sdk_add(TetherProcessorTests MANIFEST ${CMAKE_CURRENT_SOURCE_DIR}/family.json)
 add_test(NAME processor COMMAND TetherProcessorTests)
 set_tests_properties(processor PROPERTIES ENVIRONMENT "TETHER_TESTS_DIR=${CMAKE_CURRENT_SOURCE_DIR}/tests")
+
+# the audio stream through the processor, both builds, against a real JACK server (Linux)
+if(UNIX AND NOT APPLE)
+    foreach(KIND Synth Fx)
+        juce_add_console_app(TetherAudio${KIND}Tests PRODUCT_NAME "TetherAudio${KIND}Tests")
+        target_sources(TetherAudio${KIND}Tests PRIVATE tests/AudioProcessorTests.cpp ${PLUGIN_SOURCES})
+        target_include_directories(TetherAudio${KIND}Tests PRIVATE Source tests)
+        if(KIND STREQUAL "Fx")
+            target_compile_definitions(TetherAudio${KIND}Tests PRIVATE ${TTH_FX_DEFS})
+        else()
+            target_compile_definitions(TetherAudio${KIND}Tests PRIVATE ${TTH_APP_DEFS})
+        endif()
+        target_link_libraries(TetherAudio${KIND}Tests PRIVATE TetherData juce::juce_audio_utils juce::juce_recommended_config_flags ${TTH_SYS_LIBS} ${CMAKE_DL_LIBS})
+        family_sdk_add(TetherAudio${KIND}Tests MANIFEST ${CMAKE_CURRENT_SOURCE_DIR}/family.json)
+        add_test(NAME audio_${KIND} COMMAND TetherAudio${KIND}Tests $<TARGET_FILE:tether-audio>)
+    endforeach()
+endif()
 
 # ---- snapshot tool ---------------------------------------------------------------------------------
 if(TTH_BUILD_TOOLS)

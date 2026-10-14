@@ -27,11 +27,11 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release -DTTH_LTO=OFF \
 
 echo "== build (plug-ins first, tests after)"
 N=$(sysctl -n hw.ncpu 2>/dev/null || echo 4)
-cmake --build build --config Release --parallel "$N" --target Tether_AU Tether_VST3 Tether_Standalone || { echo "== PLUG-IN BUILD FAILED"; exit 1; }
+cmake --build build --config Release --parallel "$N" --target Tether_AU Tether_VST3 Tether_Standalone TetherFx_AU TetherFx_VST3 TetherFx_Standalone || { echo "== PLUG-IN BUILD FAILED"; exit 1; }
 cmake --build build --config Release --parallel "$N" || echo "== (tests did not build; the plug-ins did)"
 
 echo "== result"
-ls build/Tether_artefacts/Release/AU build/Tether_artefacts/Release/VST3 build/Tether_artefacts/Release/Standalone
+ls build/Tether_artefacts/Release/AU build/Tether_artefacts/Release/VST3 build/TetherFx_artefacts/Release/AU build/TetherFx_artefacts/Release/VST3
 
 echo "== install"
 bash scripts/dev.sh install

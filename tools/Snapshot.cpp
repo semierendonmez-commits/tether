@@ -5,6 +5,9 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include "NornsSim.h"
+#if defined(__linux__)
+#include "JackRig.h"
+#endif
 
 using namespace tether;
 
@@ -123,6 +126,37 @@ int main (int argc, char** argv)
     run (10);
     save (*ed, out.getChildFile ("recording.png"));
     proc.stopRecording();
+
+    // the AUDIO page; streaming when a daemon is given (Linux: tools/Snapshot <out> <tether-audio>)
+    ed->setLinkPage (1);
+    run (4);
+    save (*ed, out.getChildFile ("audio_off.png"));
+   #if defined(__linux__)
+    if (argc > 2 && jackrig::start())
+    {
+        const std::string port = "31877";
+        setenv ("TETHER_AUDIO_PORT", port.c_str(), 1);
+        const pid_t d = jackrig::spawn ({ argv[2], "--port", port, "--idle", "20" });
+        proc.setHost ("127.0.0.1:9");
+        auto* f = proc.apvts.getParameter (ids::audioFrom);
+        f->setValueNotifyingHost (1.0f);
+        std::atomic<bool> go { true };
+        std::thread host ([&]
+        {
+            juce::AudioBuffer<float> b (2, 256);
+            juce::MidiBuffer m;
+            auto next = std::chrono::steady_clock::now();
+            while (go.load()) { proc.processBlock (b, m); next += std::chrono::microseconds (5805); std::this_thread::sleep_until (next); }
+        });
+        for (int i = 0; i < 90; ++i) { proc.tick(); ed->pump (1.0f / 30.0f); juce::Thread::sleep (33); }
+        save (*ed, out.getChildFile ("audio_streaming.png"));
+        go = false;
+        host.join();
+        jackrig::stopChild (d);
+        jackrig::stop();
+    }
+   #endif
+    ed->setLinkPage (0);
     ed.reset();
     norns.stop();
     return 0;

@@ -26,6 +26,7 @@ Sayılar Lua'dan gelir: tamsayı `i`, ondalık `f`; eklenti iki yönde de esnek 
 | `/tether/enc` | `n:i d:i` | E1–E3 döndü |
 | `/tether/screen` | `fps:i port:i` | ekran aynası, 0 = kapalı (editör kapanınca). 2 s'de bir tekrarlanır |
 | `/tether/clock` | `bpm:f playing:i mode:i` | mode 1 tempo, 2 tempo + başlat/durdur. Yalnız norns'un kaynağı `internal` iken uygulanır |
+| `/tether/audio/start` | | tether-audio'yu başlat (ses: `AUDIO.md`) |
 | `/tether/pset/load` | `n:i` | `params:read(n)` |
 | `/tether/pset/save` | `n:i name:s` | `params:write(n, name)` |
 
