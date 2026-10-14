@@ -3,3 +3,4 @@ screenshots/
 JUCE/
 .DS_Store
 build-engine/
+build*/
