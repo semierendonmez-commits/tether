@@ -122,7 +122,7 @@ adı onu söyler (`S1 cutoff`), böylece otomasyon şeridi neyi sürdüğünü g
 
 ## 6. Aile
 
-`family.json` ile aileye katılır (`family-sdk` 1.0.2, `kind: TETHER`).
+`family.json` ile aileye katılır (`family-sdk` 1.0.3, `kind: TETHER`).
 
 | port | yön | ne |
 |---|---|---|

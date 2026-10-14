@@ -71,7 +71,7 @@ if(NOT FETCHCONTENT_SOURCE_DIR_FAMILY_SDK AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}
 endif()
 FetchContent_Declare(family_sdk
     GIT_REPOSITORY https://github.com/semierendonmez-commits/family-sdk
-    GIT_TAG f5162b3ab7e1d2c3352dd342629d4f3e4fc635b6)   # family-sdk 1.0.2
+    GIT_TAG 605d1968628edba96a8c97fc130041cecab7a3fd)   # family-sdk 1.0.3 (Apple Clang 14-15)
 FetchContent_MakeAvailable(family_sdk)
 
 set(TTH_FORMATS VST3 Standalone)
