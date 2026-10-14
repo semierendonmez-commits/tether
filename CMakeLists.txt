@@ -65,6 +65,10 @@ endif()
 # ---- family-sdk: FamilyBus, SETBOOK, BLACKBOX, CONDUIT (docs: family-sdk/docs/LINK.md) ----------
 # a local checkout instead: -DFETCHCONTENT_SOURCE_DIR_FAMILY_SDK=/path/to/family-sdk
 include(FetchContent)
+# offline: a family-sdk next to this folder (../family-sdk) is used as it is, nothing is downloaded
+if(NOT FETCHCONTENT_SOURCE_DIR_FAMILY_SDK AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/../family-sdk/cmake/FamilySDK.cmake)
+    set(FETCHCONTENT_SOURCE_DIR_FAMILY_SDK ${CMAKE_CURRENT_SOURCE_DIR}/../family-sdk)
+endif()
 FetchContent_Declare(family_sdk
     GIT_REPOSITORY https://github.com/semierendonmez-commits/family-sdk
     GIT_TAG f5162b3ab7e1d2c3352dd342629d4f3e4fc635b6)   # family-sdk 1.0.2
